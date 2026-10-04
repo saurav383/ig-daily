@@ -1,0 +1,36 @@
+name: Refresh Instagram token
+
+# Meta: refresh only works while the token is >= 24h old and unexpired.
+# Weekly sits safely inside both constraints and rolls the 60-day window
+# forward indefinitely, so the account never silently stops publishing.
+on:
+  schedule:
+    - cron: "23 4 * * 1"   # Mondays 09:53 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python refresh_token.py

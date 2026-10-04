@@ -1,0 +1,111 @@
+name: Instagram daily post
+
+on:
+  schedule:
+    # UTC = IST - 5:30. Non-round minute on purpose: GitHub warns that jobs
+    # queued at the top of an hour hit peak load and may be dropped.
+    - cron: "41 2 * * *"    # 08:11 IST  -> slot 0
+    - cron: "41 5 * * *"    # 11:11 IST  -> slot 1
+    - cron: "41 8 * * *"    # 14:11 IST  -> slot 2
+    - cron: "41 12 * * *"   # 18:11 IST  -> slot 3
+    - cron: "41 15 * * *"   # 21:11 IST  -> slot 4
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "slot number (0-4) or 'all'"
+        required: false
+        default: "all"
+      dry_run:
+        description: "render only, do not publish"
+        type: boolean
+        required: false
+        default: false
+
+# Never let two runs publish concurrently — they would race on history.json.
+concurrency:
+  group: ig-daily-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # required to push images + history
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # history.json pull --rebase needs real history
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Resolve target slot
+        id: slot
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_TARGET: ${{ inputs.target }}
+        run: |
+          if [ -n "$INPUT_TARGET" ]; then
+            TARGET="$INPUT_TARGET"
+          else
+            # Map the firing cron expression to its configured slot.
+            case "$SCHEDULE" in
+              "41 2 * * *")  TARGET=0 ;;
+              "41 5 * * *")  TARGET=1 ;;
+              "41 8 * * *")  TARGET=2 ;;
+              "41 12 * * *") TARGET=3 ;;
+              "41 15 * * *") TARGET=4 ;;
+              *)             TARGET=all ;;
+            esac
+          fi
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "resolved target: $TARGET (schedule='$SCHEDULE')"
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Publish
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Avoid the bot committing as github-actions[bot] with a noreply address
+          GIT_AUTHOR_NAME: ig-daily
+          GIT_AUTHOR_EMAIL: ig-daily@users.noreply.github.com
+          GIT_COMMITTER_NAME: ig-daily
+          GIT_COMMITTER_EMAIL: ig-daily@users.noreply.github.com
+        run: |
+          TARGET="${{ steps.slot.outputs.target }}"
+          ARGS=""
+          if [ "$TARGET" = "all" ]; then
+            ARGS="--all"
+          else
+            ARGS="--slot $TARGET"
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          echo "running: post.py $ARGS"
+          python post.py $ARGS
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ig-daily-logs
+          path: |
+            out/
+            data/
+          if-no-files-found: ignore
+          retention-days: 7

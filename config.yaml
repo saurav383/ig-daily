@@ -1,0 +1,190 @@
+# ============================================================
+# Instagram auto-poster — configuration
+# All thresholds/times are here; nothing is hard-coded in code.
+# ============================================================
+
+brand:
+  handle: "@yourhandle"          # <- change to your real IG handle
+  name: "Market Pulse"
+  tagline: "Indian markets & AI, daily"
+  # Disclaimers are appended automatically to every caption.
+  disclaimer: "Educational content only — not investment advice. Markets carry risk."
+
+schedule:
+  posts_per_day: 5
+  # Wall-clock IST times. The workflow converts these to UTC cron.
+  slots_ist: ["08:11", "11:11", "14:11", "18:11", "21:11"]
+  # Which category each slot posts. Count must equal `mix` above
+  # (3 market + 2 ai = 5). The workflow passes --slot <index> to post.py.
+  slot_categories: ["market", "market", "ai", "market", "ai"]
+
+content:
+  # How many of the 5 daily slots go to each category (3 market + 2 AI = 5).
+  mix:
+    market: 3
+    ai: 2
+  lookback_hours: 36        # only consider articles fresher than this
+  history_window: 600       # how many posted items to remember for dedupe
+  min_headline_len: 30
+  max_caption_chars: 2100   # IG hard limit is 2200; leave headroom for hashtags
+
+# Every URL below was verified live (HTTP 200 + non-empty) at build time.
+# Candidates that returned 403/404/410/503 were discarded rather than kept as
+# dead weight: NDTV Profit, Zee Business, Financial Express, India Today,
+# Hindu BusinessLine, Outlook Business, CNBC-TV18, ET Tech, Hindustan Times.
+sources:
+  market:
+    - name: "Economic Times Markets"
+      url: "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"
+      weight: 1.3
+    - name: "ET Top Stories"
+      url: "https://economictimes.indiatimes.com/rssfeedstopstories.cms"
+      weight: 1.1
+    - name: "LiveMint Markets"
+      url: "https://www.livemint.com/rss/markets"
+      weight: 1.2
+    - name: "Business Standard Markets"
+      url: "https://www.business-standard.com/rss/markets-106.rss"
+      weight: 1.2
+    - name: "Business Today Markets"
+      url: "https://www.businesstoday.in/rss/markets"
+      weight: 1.1
+    - name: "Moneycontrol Reports"
+      url: "https://www.moneycontrol.com/rss/marketreports.xml"
+      weight: 1.2
+    - name: "Moneycontrol Business"
+      url: "https://www.moneycontrol.com/rss/business.xml"
+      weight: 1.1
+  ai:
+    - name: "TechCrunch AI"
+      url: "https://techcrunch.com/category/artificial-intelligence/feed/"
+      weight: 1.2
+    - name: "Google News AI India"
+      url: "https://news.google.com/rss/search?q=artificial+intelligence+India&hl=en-IN&gl=IN&ceid=IN:en"
+      weight: 1.3
+    - name: "Google News AI Global"
+      url: "https://news.google.com/rss/search?q=AI+model+OR+LLM&hl=en-US&gl=US&ceid=US:en"
+      weight: 1.0
+    - name: "The Verge AI"
+      url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
+      weight: 1.1
+    - name: "Ars Technica AI"
+      url: "https://arstechnica.com/ai/feed/"
+      weight: 1.1
+    - name: "MIT Tech Review"
+      url: "https://www.technologyreview.com/feed/"
+      weight: 1.1
+    - name: "VentureBeat AI"
+      url: "https://venturebeat.com/category/ai/feed/"
+      weight: 1.1
+
+rank:
+  # Score = source_weight*w_source + freshness*w_fresh + keyword*w_kw
+  w_source: 1.0
+  w_fresh: 2.0
+  w_keyword: 1.5
+  keywords:
+    market:
+      - nifty
+      - sensex
+      - bank nifty
+      - rbi
+      - fii
+      - dii
+      - sebi
+      - ipo
+      - earnings
+      - quarterly
+      - crude
+      - inflation
+      - gdp
+      - rupee
+      - f&o
+      - circuit
+      - bonus
+      - dividend
+      - buyback
+      - listing
+      - uptrend
+      - breakout
+    ai:
+      - openai
+      - anthropic
+      - google gemini
+      - model
+      - llm
+      - chip
+      - gpu
+      - nvidia
+      - funding
+      - launch
+      - agent
+      - robotics
+      - regulation
+      - india
+
+image:
+  width: 1080
+  height: 1080
+  margin: 78
+  # Tried in order; first that exists wins. Ubuntu runners hit DejaVu/Liberation,
+  # Windows dev boxes hit Segoe/Arial/Verdana.
+  font_regular_candidates:
+    - "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+    - "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    - "C:/Windows/Fonts/segoeui.ttf"
+    - "C:/Windows/Fonts/arial.ttf"
+    - "C:/Windows/Fonts/verdana.ttf"
+  font_bold_candidates:
+    - "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+    - "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    - "C:/Windows/Fonts/segoeuib.ttf"
+    - "C:/Windows/Fonts/arialbd.ttf"
+    - "C:/Windows/Fonts/verdanab.ttf"
+  palettes:
+    market:
+      bg: "#0B1120"
+      panel: "#131C2E"
+      accent: "#22C55E"
+      accent_alt: "#38BDF8"
+      text: "#F8FAFC"
+      muted: "#94A3B8"
+    ai:
+      bg: "#101014"
+      panel: "#17171D"
+      accent: "#8B5CF6"
+      accent_alt: "#F472B6"
+      text: "#F9FAFB"
+      muted: "#A1A1AA"
+
+llm:
+  provider: gemini
+  model: "gemini-2.5-flash"
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+  timeout_sec: 60
+  retries: 3
+  temperature: 0.8
+
+instagram:
+  # "instagram" = graph.instagram.com, no Facebook Page needed (recommended).
+  # "facebook"  = graph.facebook.com, requires a linked FB Page.
+  login_path: instagram
+  api_version: "v26.0"
+  hosts:
+    instagram: "https://graph.instagram.com"
+    facebook: "https://graph.facebook.com"
+  container_timeout_sec: 120   # max seconds to wait for status_code=FINISHED
+  container_poll_sec: 5
+  rate_limit_per_day: 100
+
+pages:
+  # Where GitHub Pages serves the repo. images/<file> must be reachable publicly.
+  base_url: "https://YOUR_USERNAME.github.io/ig-daily"
+  # Seconds to wait after pushing an image before Instagram may fetch it.
+  settle_sec: 45
+  settle_poll_sec: 10
+
+telegram:
+  # Set TELEGRAM_TOKEN / TELEGRAM_CHAT_ID as repository secrets.
+  # Leave enabled: true to get failure alerts.
+  enabled: true

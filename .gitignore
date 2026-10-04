@@ -1,0 +1,17 @@
+# secrets / local env
+.env
+*.secret
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# local test artifacts
+logs/
+out/
+*.tmp
+
+# keep images/ tracked (GitHub Pages serves it), but ignore scratch renders
+images/_scratch/
