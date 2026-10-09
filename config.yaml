@@ -4,7 +4,7 @@
 # ============================================================
 
 brand:
-  handle: "@yourhandle"          # <- change to your real IG handle
+  handle: "@saurav383"          # <- change to your real IG handle before going live
   name: "Market Pulse"
   tagline: "Indian markets & AI, daily"
   # Disclaimers are appended automatically to every caption.
@@ -179,7 +179,7 @@ instagram:
 
 pages:
   # Where GitHub Pages serves the repo. images/<file> must be reachable publicly.
-  base_url: "https://YOUR_USERNAME.github.io/ig-daily"
+  base_url: "https://saurav383.github.io/ig-daily"
   # Seconds to wait after pushing an image before Instagram may fetch it.
   settle_sec: 45
   settle_poll_sec: 10
