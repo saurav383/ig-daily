@@ -4,8 +4,11 @@
 # ============================================================
 
 brand:
-  handle: "@saurav383"          # <- change to your real IG handle before going live
-  name: "Market Pulse"
+  # Verified free on Instagram 2026-10-09. Register it before the first post —
+  # the Name field (30 chars, indexed by IG search) is where ranking comes
+  # from, not the handle; see README for the suggested Name field wording.
+  handle: "@rupeeandrobot"
+  name: "Rupee & Robot"
   tagline: "Indian markets & AI, daily"
   # Disclaimers are appended automatically to every caption.
   disclaimer: "Educational content only — not investment advice. Markets carry risk."
