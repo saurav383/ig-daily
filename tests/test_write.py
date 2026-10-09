@@ -123,6 +123,132 @@ class TestGenerateFallback(unittest.TestCase):
         for k in ("headline", "caption", "hashtags", "alt_text"):
             self.assertIn(k, out)
 
+    def test_all_models_failing_reports_llm_ok_false(self):
+        """Regression: `result` used to be reassigned to the template dict
+        before `llm_ok = result is not None`, so a total outage silently
+        reported success."""
+        from unittest import mock
+
+        with mock.patch("pipeline.write._call_model", return_value=None):
+            out = generate(make(), CFG, api_key="k", log=lambda *a: None)
+        self.assertFalse(out["llm_ok"])
+        self.assertEqual(out["model"], "template")
+
+    def test_model_dead_moves_to_fallback(self):
+        """A retired model (404) must not abort — the chain should advance."""
+        from unittest import mock
+
+        from pipeline.write import _ModelDead
+
+        good = {"headline": "Sensex ends higher", "caption": "Markets rallied.",
+                "hashtags": ["#Nifty500"], "alt_text": "card"}
+        calls = []
+
+        def fake(endpoint, model, *a, **kw):
+            calls.append(model)
+            if model == CFG["llm"]["model"]:
+                raise _ModelDead("HTTP 404 retired")
+            return good
+
+        with mock.patch("pipeline.write._call_model", side_effect=fake):
+            out = generate(make(), CFG, api_key="k", log=lambda *a: None)
+
+        self.assertTrue(out["llm_ok"])
+        self.assertEqual(calls, [CFG["llm"]["model"]] + CFG["llm"]["fallback_models"][:1])
+        self.assertEqual(out["model"], CFG["llm"]["fallback_models"][0])
+
+    def test_fallback_chain_configured(self):
+        chain = CFG["llm"].get("fallback_models")
+        self.assertTrue(chain, "fallback_models must be configured")
+        self.assertEqual(len(chain), len(set(chain)), "duplicate fallbacks")
+        self.assertNotIn(CFG["llm"]["model"], chain)
+
+    def test_daily_quota_429_skips_without_retrying(self):
+        """Free tier is 20 requests/day per model. The error says 'retry in
+        17h', so spending 3 retries on it would burn a third of the model's
+        whole daily budget for a guaranteed failure."""
+        import json as _json
+        from unittest import mock
+
+        from pipeline.write import _ModelDead, _call_model
+
+        body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                          "message": "quota exceeded, retry in 17h",
+                          "details": [{"@type": "t/QuotaFailure",
+                                       "violations": [{
+                                           "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                                           "quotaValue": 20}]}]}}
+        posts = []
+
+        def fake_post(url, **kw):
+            posts.append(url)
+            m = mock.Mock()
+            m.status_code = 429
+            m.json.return_value = body
+            m.text = _json.dumps(body)
+            return m
+
+        with mock.patch("pipeline.write.requests.post", side_effect=fake_post):
+            with self.assertRaises(_ModelDead) as ctx:
+                _call_model("https://x/{model}:generateContent", "m", {}, {},
+                            retries=3, timeout=5, log=lambda *a: None)
+
+        self.assertEqual(len(posts), 1, "must not retry a daily-quota 429")
+        self.assertIn("daily quota", str(ctx.exception))
+
+    def test_per_minute_429_is_still_retried(self):
+        """A per-minute limit genuinely does recover, so it should be retried."""
+        import json as _json
+        from unittest import mock
+
+        from pipeline.write import _call_model
+
+        body = {"error": {"code": 429,
+                          "message": "rate limit",
+                          "details": [{"@type": "t/QuotaFailure",
+                                       "violations": [{
+                                           "quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]}]}}
+        posts = []
+
+        def fake_post(url, **kw):
+            posts.append(url)
+            if len(posts) < 2:
+                m = mock.Mock()
+                m.status_code = 429
+                m.json.return_value = body
+                m.text = _json.dumps(body)
+                return m
+            m = mock.Mock()
+            m.status_code = 200
+            m.json.return_value = {
+                "candidates": [{"content": {"parts": [{"text": '{"a": 1}'}]}}]}
+            m.text = ""
+            return m
+
+        with mock.patch("pipeline.write.requests.post", side_effect=fake_post):
+            with mock.patch("pipeline.write.time.sleep"):
+                out = _call_model("https://x/{model}:generateContent", "m",
+                                  {}, {}, retries=3, timeout=5,
+                                  log=lambda *a: None)
+
+        self.assertEqual(out, {"a": 1})
+        self.assertEqual(len(posts), 2, "per-minute 429 should be retried")
+
+    def test_quota_id_parsed_from_error_body(self):
+        import json as _json
+        from unittest import mock
+
+        from pipeline.write import _quota_id
+
+        m = mock.Mock()
+        m.json.return_value = {"error": {"details": [
+            {"violations": [{"quotaId": "SomeDayQuota"}]}]}}
+        self.assertEqual(_quota_id(m), "SomeDayQuota")
+
+        m2 = mock.Mock()
+        m2.json.side_effect = ValueError("not json")
+        self.assertEqual(_quota_id(m2), "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -159,7 +159,24 @@ image:
 
 llm:
   provider: gemini
-  model: "gemini-2.5-flash"
+  # Measured against THIS key on 2026-10-09, not assumed from docs:
+  #   * free tier is 20 requests/DAY PER MODEL
+  #       quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+  #       (resets ~18h; NOT a billing block)
+  #   * `gemini-flash-latest` resolves to gemini-3.8-flash underneath — only
+  #     20/day AND chronically 503, so it sits last, not first
+  #   * gemini-2.5-flash/-lite/-pro still appear in GET /models but 404 on
+  #     generateContent ("no longer available to new users") — a red herring
+  #   * 3.5-flash wrote the best live caption of the batch (4.2s)
+  # Every entry below was individually confirmed answering on this key.
+  # write.py walks them in order and skips a model the moment its daily quota
+  # is spent rather than burning retries on a "retry in 17h" error.
+  model: "gemini-3.5-flash"
+  fallback_models:
+    - "gemini-3.1-flash-lite"
+    - "gemini-3.6-flash"
+    - "gemini-flash-lite-latest"
+    - "gemini-flash-latest"
   endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
   timeout_sec: 60
   retries: 3

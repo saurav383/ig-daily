@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+
 import requests
 
 from .fetch import truncate_words
@@ -137,6 +139,69 @@ def normalise(result: dict, cfg: dict, article) -> dict:
     }
 
 
+class _ModelDead(Exception):
+    """The model itself is gone (404/400/403) — don't waste retries on it."""
+
+
+def _quota_id(resp) -> str:
+    """Pull quotaId out of a 429 body so we can tell daily from per-minute."""
+    try:
+        for d in resp.json().get("error", {}).get("details", []):
+            for v in (d.get("violations") or []):
+                qid = v.get("quotaId")
+                if qid:
+                    return qid
+    except (ValueError, AttributeError, TypeError):
+        pass
+    return ""
+
+
+def _call_model(endpoint_fmt: str, model: str, headers: dict, payload: dict,
+                retries: int, timeout: int, log) -> dict | None:
+    """Try one model. Returns parsed JSON, None after exhausting retries.
+
+    Distinguishes three very different failures:
+      * dead model (400/403/404)      -> raise _ModelDead, try next now
+      * daily quota exhausted (429 Day)-> raise _ModelDead, try next now
+      * transient (503/429 per-minute) -> back off and retry
+    The middle case matters most: free tier allows ~20 requests/day PER MODEL
+    and the error says "retry in 17h". Retrying it would burn a third of that
+    model's entire daily budget on a guaranteed failure.
+    """
+    url = endpoint_fmt.format(model=model)
+    for attempt in range(retries):
+        try:
+            r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            if r.status_code in (400, 403, 404):
+                msg = ""
+                try:
+                    msg = r.json().get("error", {}).get("message", "")[:120]
+                except ValueError:
+                    msg = r.text[:120]
+                raise _ModelDead(f"HTTP {r.status_code} {msg}")
+            if r.status_code == 429:
+                qid = _quota_id(r)
+                if "Day" in qid:
+                    raise _ModelDead(
+                        f"429 daily quota exhausted ({qid}) — no point retrying")
+                # per-minute limit: genuinely worth waiting out below
+            if r.status_code != 200:
+                raise requests.RequestException(
+                    f"HTTP {r.status_code}: {r.text[:200]}")
+            data = r.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return _parse_json(text)
+        except _ModelDead:
+            raise
+        except (requests.RequestException, KeyError, IndexError, ValueError) as e:
+            log(f"  [llm] {model} attempt {attempt + 1}/{retries}: {str(e)[:160]}")
+            # Google returns 503 under load far more often than it should.
+            # Exponential backoff rather than hammering the endpoint.
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+    return None
+
+
 def generate(article, cfg: dict, api_key: str, log=print) -> dict:
     """Call Gemini and return a normalised payload. Falls back on failure."""
     llm = cfg["llm"]
@@ -152,7 +217,6 @@ def generate(article, cfg: dict, api_key: str, log=print) -> dict:
             cfg,
             article,
         ) | {"llm_ok": False}
-    endpoint = llm["endpoint"].format(model=llm["model"])
     payload = {
         "contents": [{"parts": [{"text": build_prompt(article, article.category)}]}],
         "generationConfig": {
@@ -162,31 +226,34 @@ def generate(article, cfg: dict, api_key: str, log=print) -> dict:
     }
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
-    result: dict | None = None
-    last_err = ""
-    for attempt in range(int(llm["retries"])):
-        try:
-            r = requests.post(
-                endpoint,
-                headers=headers,
-                json=payload,
-                timeout=int(llm["timeout_sec"]),
-            )
-            if r.status_code != 200:
-                last_err = f"HTTP {r.status_code}: {r.text[:200]}"
-                if r.status_code in (429, 500, 503):
-                    raise requests.RequestException(last_err)
-                break
-            data = r.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            result = _parse_json(text)
-            break
-        except (requests.RequestException, KeyError, IndexError, ValueError) as e:
-            last_err = str(e)[:200]
-            log(f"  [llm] attempt {attempt + 1} failed: {last_err}")
+    # Google retires models with little notice (gemini-2.5-flash now 404s
+    # while still appearing in the model list) and throttles hot ones with 503.
+    # Walk a verified chain rather than betting on a single model name.
+    models = [llm["model"]]
+    models += [m for m in (llm.get("fallback_models") or []) if m and m not in models]
 
-    if result is None:
-        log("  [llm] falling back to template caption")
+    result: dict | None = None
+    used_model = ""
+    for model in models:
+        try:
+            result = _call_model(
+                llm["endpoint"], model, headers, payload,
+                retries=int(llm["retries"]), timeout=int(llm["timeout_sec"]),
+                log=log,
+            )
+        except _ModelDead as e:
+            log(f"  [llm] {model} unavailable: {e}")
+            continue
+        if result is not None:
+            used_model = model
+            break
+        log(f"  [llm] {model} exhausted retries, trying next")
+
+    llm_ok = result is not None
+    if llm_ok:
+        log(f"  [llm] used {used_model}")
+    else:
+        log("  [llm] every model failed — using template caption")
         result = {
             "headline": article.title,
             "caption": f"{article.title}\n\nVia {article.source}.",
@@ -195,5 +262,6 @@ def generate(article, cfg: dict, api_key: str, log=print) -> dict:
         }
 
     out = normalise(result, cfg, article)
-    out["llm_ok"] = result is not None
+    out["llm_ok"] = llm_ok          # was always True before: `result` had
+    out["model"] = used_model or "template"   # already been reassigned above
     return out
