@@ -3,7 +3,8 @@ import tempfile
 import unittest
 
 from pipeline.dedupe import History, article_key
-from pipeline.fetch import Article, clean_title, strip_html, truncate_words
+from pipeline.fetch import (Article, clean_summary, clean_title, strip_html,
+                            truncate_words)
 from datetime import datetime, timezone
 
 
@@ -99,6 +100,48 @@ class TestTitleCleaning(unittest.TestCase):
     def test_colon_subtitles_preserved(self):
         t = "Policy decision: what analysts expect this week - NDTV Profit"
         self.assertNotIn("NDTV", clean_title(t, "Google News"))
+
+
+class TestSummaryCleaning(unittest.TestCase):
+    HEAD = "Modi wants India to power the AI age. Residents are pushing back."
+
+    def test_google_news_headline_echo_with_byline_dropped(self):
+        """Google News puts `<a>Headline</a>Publisher` in <description>; a deck
+        that repeats the headline plus a byline reads as a bug."""
+        raw = ("<a href='https://news.google.com/rss/articles/abc'>"
+               f"{self.HEAD}</a>The Japan Times")
+        self.assertEqual(clean_summary(raw, self.HEAD, "Google News AI India"), "")
+
+    def test_identical_text_dropped(self):
+        head = "European AI flag bearer Mistral ships a new open weights model"
+        self.assertEqual(clean_summary(head, head, "Google News AI Global"), "")
+
+    def test_real_paragraph_summary_kept(self):
+        head = "Sensex rallies 500 points"
+        raw = ("<p>Benchmark indices closed higher on Monday as IT stocks "
+               "rallied after the central bank held rates steady, with the "
+               "Sensex adding 512 points.</p>")
+        out = clean_summary(raw, head, "Economic Times Markets")
+        self.assertIn("Benchmark indices closed higher", out)
+        self.assertNotIn("<p>", out)
+
+    def test_summary_embedded_in_longer_headline_dropped(self):
+        head = "Sensex and Nifty rally to a record high in volatile trade"
+        self.assertEqual(clean_summary("Sensex and Nifty rally", head, "ET"), "")
+
+    def test_byline_appended_to_real_summary_survives(self):
+        head = "Sensex rallies 500 points"
+        raw = ("<p>Benchmark indices closed higher on Monday as IT stocks "
+               "rallied after the central bank held rates steady, lifting the "
+               "Sensex by 512 points in a broad-based rally.</p>Reuters")
+        out = clean_summary(raw, head, "Economic Times Markets")
+        self.assertIn("Benchmark indices closed higher", out)
+
+    def test_tiny_summary_dropped(self):
+        self.assertEqual(clean_summary("shares up", "A long enough headline", "ET"), "")
+
+    def test_empty_input_safe(self):
+        self.assertEqual(clean_summary("", "Headline", "ET"), "")
 
 
 class TestTruncate(unittest.TestCase):

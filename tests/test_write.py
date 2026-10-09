@@ -68,6 +68,44 @@ class TestNormalise(unittest.TestCase):
         self.assertTrue(out["hashtags"])
         self.assertIn("#", out["hashtags"][0])
 
+    def test_deck_normalised_and_capped(self):
+        out = normalise(
+            {"caption": "Body.", "hashtags": ["#x"], "alt_text": "a",
+             "deck": "Benchmark indices closed 512 points up as IT stocks "
+                     "rallied across the board on Monday   "},
+            CFG, make())
+        self.assertTrue(out["deck"])
+        self.assertLessEqual(len(out["deck"]), 130)
+        self.assertFalse(out["deck"].endswith("."))
+        self.assertNotIn("  ", out["deck"])
+
+    def test_missing_deck_is_empty_not_crash(self):
+        out = normalise({"caption": "Body.", "hashtags": ["#x"]}, CFG, make())
+        self.assertEqual(out["deck"], "")
+
+    def test_deck_echoing_headline_blanked(self):
+        """A deck that repeats the headline reads as a rendering bug."""
+        head = "Sensex climbs 500 points as RBI holds rates steady"
+        out = normalise({"caption": "Body.", "hashtags": ["#x"],
+                         "headline": head, "deck": head}, CFG, make())
+        self.assertEqual(out["deck"], "")
+
+    def test_deck_too_short_blanked(self):
+        """Too short to read as a sentence is worse than no deck."""
+        out = normalise({"caption": "Body.", "hashtags": ["#x"],
+                         "deck": "Shares up"}, CFG, make())
+        self.assertEqual(out["deck"], "")
+
+    def test_deck_advice_stripped_and_flagged(self):
+        out = normalise(
+            {"caption": "Body.", "hashtags": ["#x"], "alt_text": "a",
+             "deck": "Rallied 512 points on Monday. Buy this now and book "
+                     "guaranteed returns before the weekend."},
+            CFG, make())
+        self.assertNotIn("guaranteed returns", out["deck"].lower())
+        self.assertIn("Rallied 512 points", out["deck"])
+        self.assertTrue(out["advice_stripped"])
+
     def test_headline_truncated_at_word_boundary(self):
         out = normalise({"headline": "word " * 60}, CFG, make())
         self.assertLessEqual(len(out["headline"]), 100)

@@ -15,7 +15,7 @@ import time
 
 import requests
 
-from .fetch import truncate_words
+from .fetch import _norm_text, truncate_words
 
 # Phrases that read as investment advice. Kept deliberately narrow so we do not
 # strip legitimate news language like "shares fell" or "buyback record date".
@@ -47,6 +47,8 @@ HARD RULES:
 OUTPUT: strict JSON, no markdown fences, exactly these keys:
   "headline"  - punchy card headline, max 88 chars, no trailing period,
                 no source name, no ALL CAPS words
+  "deck"      - ONE line of card subhead, max 110 chars. Say what happened,
+                not a rewording of the headline. No source name, no advice.
   "caption"   - the post body WITHOUT hashtags and WITHOUT disclaimer
   "hashtags"  - array of 5-8 hashtags, each starting with #
   "alt_text"  - one sentence describing the card for screen readers
@@ -94,6 +96,17 @@ def normalise(result: dict, cfg: dict, article) -> dict:
     headline = re.sub(r"\s+", " ", headline).rstrip(".")
     headline = truncate_words(headline, 100)
 
+    # The deck is the small subhead under the headline. It has to earn its
+    # space: a deck that just restates the headline, or is too short to read
+    # as a sentence, looks worse than no deck at all — so blank it and let
+    # render.py fall back to the feed summary.
+    deck = re.sub(r"\s+", " ", strip_advice(str(result.get("deck") or ""))).strip()
+    deck = deck.rstrip(". ")
+    if len(deck) > 130:
+        deck = truncate_words(deck, 130)
+    if len(deck) < 25 or _norm_text(deck) == _norm_text(headline):
+        deck = ""
+
     caption = strip_advice(str(result.get("caption") or "").strip())
     if not caption:
         caption = f"{article.title}. Reported by {article.source}."
@@ -132,10 +145,14 @@ def normalise(result: dict, cfg: dict, article) -> dict:
 
     return {
         "headline": headline,
+        "deck": deck,
         "caption": assembled,
         "hashtags": tags,
         "alt_text": str(result.get("alt_text") or headline)[:1000],
-        "advice_stripped": bool(_ADVICE_RE.search(str(result.get("caption") or ""))),
+        "advice_stripped": bool(
+            _ADVICE_RE.search(str(result.get("caption") or ""))
+            or _ADVICE_RE.search(str(result.get("deck") or ""))
+        ),
     }
 
 

@@ -50,6 +50,38 @@ def clean_title(title: str, source: str = "") -> str:
     return title
 
 
+def _norm_text(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+
+def clean_summary(raw: str, headline: str, source: str = "") -> str:
+    """Repair a feed summary so the card deck is never garbage.
+
+    Google News RSS puts `<a href=...>Headline - Publisher</a>` in
+    <description>, so strip_html alone hands the headline back a second time
+    plus a byline ("...residents are pushing back. The Japan Times"). A deck
+    that repeats the headline reads as a bug, so collapse that case to "" and
+    let the renderer fall back to the deck the LLM wrote.
+    """
+    text = _WS_RE.sub(" ", strip_html(raw or "")).strip()
+    text = clean_title(text, source)
+    if len(text) < 60:
+        return ""
+    a, b = _norm_text(text), _norm_text(headline)
+    if not a or not b:
+        return text[:600]
+    if a == b:
+        return ""
+    # Headline embedded in the summary with only a byline trailing after it.
+    if b in a:
+        extra = a.replace(b, "", 1).strip()
+        if len(extra) <= 40:
+            return ""
+    if a in b and len(b) - len(a) <= 40:
+        return ""
+    return text[:600]
+
+
 def truncate_words(text: str, limit: int) -> str:
     """Cut at `limit` chars without ever splitting a word."""
     text = _WS_RE.sub(" ", text).strip()
@@ -168,7 +200,9 @@ def fetch_category(
                     source=src["name"],
                     category=category,
                     published=published,
-                    summary=strip_html(entry.get("summary", ""))[:600],
+                    summary=clean_summary(
+                        entry.get("summary", ""), title, src["name"]
+                    ),
                     weight=float(src.get("weight", 1.0)),
                 )
             )

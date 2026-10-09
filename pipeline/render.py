@@ -131,8 +131,13 @@ def render(article, meta: dict, cfg: dict, out_path: str) -> str:
 
     deck_font = resolve_font(fonts_r, 30)
     deck_lines: list[str] = []
-    if article.summary:
-        deck = textwrap.shorten(article.summary, width=190, placeholder=" …")
+    # Prefer the deck the LLM wrote; fall back to the feed summary. The feed
+    # value is already cleaned in fetch.clean_summary(), so a Google News
+    # entry (whose <description> is just "Headline - Publisher") lands here as
+    # "" instead of repeating the headline under itself.
+    deck_src = str(meta.get("deck") or "").strip() or article.summary
+    if deck_src:
+        deck = textwrap.shorten(deck_src, width=190, placeholder=" …")
         deck_lines = _wrap(draw, deck, deck_font, w - 2 * m)[:4]
     deck_h = len(deck_lines) * 42
 
